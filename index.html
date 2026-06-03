@@ -1,1 +1,265 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <title>Geo-Dash Pure HTML Edition</title>
+    <style>
+        body { margin: 0; background: #000; overflow: hidden; font-family: 'Arial Black', sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; }
+        #game-container { position: relative; width: 800px; height: 400px; border: 3px solid #222; background: #050505; box-shadow: 0 0 50px rgba(0,0,0,1); }
+        canvas { display: block; }
+        .overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; background: rgba(0,0,0,0.85); z-index: 10; color: white; text-align: center; }
+        .hidden { display: none !important; }
+        button { padding: 15px 45px; margin: 10px; cursor: pointer; background: #2ecc71; border: 4px solid #27ae60; color: white; font-weight: bold; border-radius: 10px; font-size: 20px; transition: 0.2s; }
+        button:hover { transform: scale(1.1); background: #27ae60; }
+        .btn-custom { background: #9b59b6; border-color: #8e44ad; }
+        #hud { position: absolute; top: 15px; width: 100%; text-align: center; color: white; font-size: 28px; font-weight: bold; pointer-events: none; text-shadow: 3px 3px 0px #000; z-index: 5; }
+    </style>
+</head>
+<body>
 
+<div id="game-container">
+    <canvas id="gameCanvas" width="800" height="400"></canvas>
+    <div id="hud" class="hidden">0%</div>
+
+    <div id="main-menu" class="overlay">
+        <h1 style="color:#2ecc71; font-size: 60px; margin-bottom: 20px; text-shadow: 4px 4px #1b5e20;">GEO-DASH</h1>
+        <button onclick="showScreen('level-menu')">GIOCA</button>
+        <button onclick="showScreen('custom-menu')" class="btn-custom">PERSONALIZZA</button>
+    </div>
+
+    <div id="level-menu" class="overlay hidden">
+        <h2>SCEGLI IL LIVELLO</h2>
+        <button onclick="startGame(0)">1. STEREO MADNESS</button>
+        <button onclick="startGame(1)">2. POLARGEIST</button>
+        <button onclick="startGame(2)">3. DRY OUT</button>
+        <button onclick="startGame(3)">4. THEORY OF EVERYTHING</button>
+        <button onclick="startGame(4)" style="background:#e74c3c">5. CLUBSTEP LITE</button>
+        <button onclick="showScreen('main-menu')" style="background:#555; border:none">INDIETRO</button>
+    </div>
+
+    <div id="custom-menu" class="overlay hidden">
+        <h2>SKIN EDITOR</h2>
+        <div style="background:rgba(255,255,255,0.1); padding:20px; border-radius:15px;">
+            <p>COLORE CUBO</p>
+            <input type="color" id="playerCol" value="#00ff00" onchange="player.color = this.value">
+            <p>DESIGN</p>
+            <div style="display:flex; gap:15px;">
+                <button onclick="player.design=0" style="padding:10px">CLASSIC</button>
+                <button onclick="player.design=1" style="padding:10px">CROSS</button>
+                <button onclick="player.design=2" style="padding:10px">GHOST</button>
+            </div>
+        </div>
+        <button onclick="showScreen('main-menu')" style="margin-top:20px;">SALVA</button>
+    </div>
+</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const hud = document.getElementById('hud');
+
+let gameState = 'menu';
+let cameraX = 0;
+let obstacles = [];
+let keys = {};
+
+const player = {
+    x: 180, y: 300, w: 30, h: 30,
+    vy: 0, gravity: 0.9, jumpPower: -13.5,
+    rotation: 0, color: '#00ff00', design: 0,
+    mode: 'cube', isGrounded: false
+};
+
+// Mappe strutturate: x, y, tipo (S=Spike, B=Block, P=ShipPortal, C=CubePortal)
+const levels = [
+    // Livello 1: Semplice ma con blocchi sospesi
+    [{x:600,y:330,t:'S'}, {x:800,y:330,t:'S'}, {x:1100,y:290,t:'B'}, {x:1140,y:290,t:'B'}, {x:1400,y:330,t:'S'}, {x:1435,y:330,t:'S'}],
+    // Livello 2: Scale di blocchi
+    [{x:600,y:290,t:'B'}, {x:800,y:250,t:'B'}, {x:1000,y:210,t:'B'}, {x:1050,y:210,t:'S'}, {x:1300,y:330,t:'S'}],
+    // Livello 3: Introduzione Portale
+    [{x:600,y:330,t:'S'}, {x:800,y:220,t:'P'}, {x:1200,y:100,t:'B'}, {x:1500,y:220,t:'C'}, {x:1800,y:330,t:'S'}],
+    // Livello 4: Parkour stretto
+    [{x:500,y:330,t:'S'}, {x:700,y:280,t:'B'}, {x:740,y:280,t:'S'}, {x:950,y:240,t:'B'}, {x:1200,y:330,t:'S'}, {x:1400,y:220,t:'P'}],
+    // Livello 5: Demon Lite
+    [{x:600,y:330,t:'S'}, {x:640,y:330,t:'S'}, {x:800,y:250,t:'B'}, {x:800,y:150,t:'B'}, {x:1100,y:330,t:'S'}, {x:1300,y:200,t:'P'}, {x:1800,y:200,t:'C'}]
+];
+
+window.onkeydown = (e) => keys[e.code] = true;
+window.onkeyup = (e) => keys[e.code] = false;
+
+function showScreen(id) {
+    document.querySelectorAll('.overlay').forEach(el => el.classList.add('hidden'));
+    if(id !== 'none') document.getElementById(id).classList.remove('hidden');
+}
+
+function startGame(idx) {
+    gameState = 'playing';
+    cameraX = 0;
+    player.y = 330;
+    player.vy = 0;
+    player.mode = 'cube';
+    obstacles = levels[idx];
+    hud.classList.remove('hidden');
+    showScreen('none');
+    requestAnimationFrame(update);
+}
+
+function update() {
+    if(gameState !== 'playing') return;
+
+    let jump = keys['Space'] || keys['ArrowUp'];
+    
+    if(player.mode === 'cube') {
+        if(jump && player.isGrounded) {
+            player.vy = player.jumpPower;
+            player.isGrounded = false;
+        }
+        player.vy += player.gravity;
+        player.rotation += player.isGrounded ? 0 : 0.18;
+    } else {
+        player.vy += jump ? -0.7 : 0.7;
+        player.rotation = player.vy * 0.06;
+    }
+
+    player.y += player.vy;
+    cameraX += 7.5;
+    player.isGrounded = false;
+
+    // Collisione Pavimento Base
+    if(player.y > 330) {
+        player.y = 330;
+        player.vy = 0;
+        player.isGrounded = true;
+        player.rotation = Math.round(player.rotation / (Math.PI/2)) * (Math.PI/2);
+    }
+
+    // Sistema Collisioni Avanzato
+    obstacles.forEach(o => {
+        let ox = o.x - cameraX;
+        let oy = o.y;
+        let ow = (o.t === 'B' ? 40 : 30);
+        let oh = (o.t === 'B' ? 40 : 30);
+
+        // AABB Collision (con padding di 4px per hitbox onesta)
+        if(player.x < ox + ow - 4 && player.x + player.w > ox + 4 && 
+           player.y < oy + oh - 4 && player.y + player.h > oy + 4) {
+            
+            if(o.t === 'S') gameOver();
+            if(o.t === 'P') player.mode = 'ship';
+            if(o.t === 'C') player.mode = 'cube';
+            
+            if(o.t === 'B') {
+                // Controllo se siamo SOPRA il blocco
+                if(player.vy > 0 && player.y + player.h < oy + 20) {
+                    player.y = oy - player.h;
+                    player.vy = 0;
+                    player.isGrounded = true;
+                } else {
+                    gameOver(); // Impatto laterale o frontale
+                }
+            }
+        }
+    });
+
+    if(player.y < -50 || player.y > 450) gameOver();
+
+    let lastObs = obstacles[obstacles.length-1];
+    let prog = Math.min(100, Math.floor((cameraX / (lastObs.x + 500)) * 100));
+    hud.innerText = prog + "%";
+    if(prog >= 100) victory();
+
+    draw();
+    requestAnimationFrame(update);
+}
+
+function draw() {
+    // Sfondo Dinamico
+    ctx.fillStyle = '#0a0a1a';
+    ctx.fillRect(0,0,800,400);
+    
+    // Griglia Parallasse
+    ctx.strokeStyle = '#151535';
+    ctx.lineWidth = 1;
+    for(let i=0; i<800; i+=40) {
+        ctx.beginPath(); ctx.moveTo(i-(cameraX*0.5%40), 0); ctx.lineTo(i-(cameraX*0.5%40), 400); ctx.stroke();
+    }
+
+    // Pavimento
+    ctx.fillStyle = '#111';
+    ctx.fillRect(0, 360, 800, 40);
+    ctx.strokeStyle = player.color;
+    ctx.lineWidth = 3;
+    ctx.strokeRect(-5, 360, 810, 2);
+
+    // Disegno Ostacoli (Vettoriale)
+    obstacles.forEach(o => {
+        let ox = o.x - cameraX;
+        if(ox < -100 || ox > 850) return;
+
+        ctx.save();
+        if(o.t === 'B') {
+            ctx.fillStyle = '#222';
+            ctx.strokeStyle = '#eee';
+            ctx.lineWidth = 2;
+            ctx.fillRect(ox, o.y, 40, 40);
+            ctx.strokeRect(ox, o.y, 40, 40);
+        } else if(o.t === 'S') {
+            ctx.fillStyle = '#fff';
+            ctx.beginPath();
+            ctx.moveTo(ox, o.y+30); ctx.lineTo(ox+15, o.y); ctx.lineTo(ox+30, o.y+30);
+            ctx.fill();
+        } else if(o.t === 'P' || o.t === 'C') {
+            ctx.strokeStyle = o.t === 'P' ? '#f1c40f' : '#3498db';
+            ctx.lineWidth = 5;
+            ctx.setLineDash([5, 5]);
+            ctx.strokeRect(ox, o.y, 30, 100);
+        }
+        ctx.restore();
+    });
+
+    // Disegno Player (Vettoriale)
+    ctx.save();
+    ctx.translate(player.x + 15, player.y + 15);
+    ctx.rotate(player.rotation);
+    ctx.fillStyle = player.color;
+    ctx.shadowBlur = 10;
+    ctx.shadowColor = player.color;
+    
+    if(player.mode === 'cube') {
+        ctx.fillRect(-15, -15, 30, 30);
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(-15, -15, 30, 30);
+        
+        // Designs
+        ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+        if(player.design === 1) {
+            ctx.beginPath(); ctx.moveTo(-15, -15); ctx.lineTo(15, 15); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(15, -15); ctx.lineTo(-15, 15); ctx.stroke();
+        } else if(player.design === 2) {
+            ctx.strokeRect(-7,-7,14,14);
+        }
+    } else {
+        // Astronave Vettoriale
+        ctx.beginPath();
+        ctx.moveTo(-15, 10); ctx.lineTo(20, 0); ctx.lineTo(-15, -10);
+        ctx.closePath(); ctx.fill();
+        ctx.strokeStyle = '#fff'; ctx.stroke();
+    }
+    ctx.restore();
+}
+
+function gameOver() {
+    gameState = 'menu';
+    alert("CRASH! Riprova.");
+    showScreen('main-menu');
+}
+
+function victory() {
+    gameState = 'menu';
+    alert("LIVELLO COMPLETATO! SEI UN DIO!");
+    showScreen('level-menu');
+}
+</script>
+</body>
+</html>
